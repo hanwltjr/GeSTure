@@ -45,6 +45,13 @@ type RecognitionState = {
 
 const handState: HandState = createInitialHandState();
 const stabilizer = new PoseStabilizer(POSE_HOLD_MS);
+let poseHoldTimer: ReturnType<typeof setTimeout> | undefined;
+
+function cancelPoseHold(): void
+{
+  clearTimeout(poseHoldTimer);
+  poseHoldTimer = undefined;
+}
 
 const recognitionState: RecognitionState = {
   current: recognizePose(handState),
@@ -262,6 +269,10 @@ function broadcast(): void
 function advance(): void
 {
   const recognition = recognizePose(handState);
+  if (recognition.classId !== recognitionState.current.classId)
+  {
+    cancelPoseHold();
+  }
   recognitionState.current = recognition;
 
   if (recognitionState.correcting)
@@ -275,6 +286,15 @@ function advance(): void
 
   if (committed === null)
   {
+    // 입력이 멈춰도 유지 시간이 끝나면 같은 포즈를 다시 판정한다.
+    if (recognition.status !== 'rest' && stabilizer.committed !== recognition.classId && poseHoldTimer === undefined)
+    {
+      poseHoldTimer = setTimeout(() =>
+      {
+        poseHoldTimer = undefined;
+        advance();
+      }, POSE_HOLD_MS);
+    }
     if (recognition.status === 'rest')
     {
       recognitionState.note = '다섯 손가락이 모두 펴진 rest 상태다. 자모를 넣지 않는다';
@@ -288,6 +308,7 @@ function advance(): void
     return;
   }
 
+  cancelPoseHold();
   if (recognitionState.slots.some((slot) => slot.classId === committed))
   {
     recognitionState.note = '이 손 모양은 이미 이번 단어에 들어가 있다';
@@ -317,6 +338,7 @@ function advance(): void
 
 async function runCorrection(slots: JamoSlot[]): Promise<void>
 {
+  cancelPoseHold();
   const startedGeneration = generation;
 
   recognitionState.correcting = true;
@@ -358,6 +380,7 @@ async function runCorrection(slots: JamoSlot[]): Promise<void>
 
 function resetRecognition(): void
 {
+  cancelPoseHold();
   generation += 1;
   stabilizer.reset();
   recognitionState.current = recognizePose(handState);
